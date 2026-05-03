@@ -1,69 +1,69 @@
 # Chaos Protocol — 混沌协议
 
-**Extensible roguelike framework with card battle system.**
+**可扩展的 Roguelike 框架 + 卡牌战斗系统。**
 
-Built with [Phaser.js 3](https://phaser.io/) — no build step, open in a browser and play.
+基于 [Phaser.js 3](https://phaser.io/) — 无需构建，打开浏览器即可玩。
 
-## Quick Start
+## 快速开始
 
 ```bash
-./start.sh       # Start server and open browser
-./stop.sh        # Stop server
-npm start        # Same as ./start.sh
-npm run serve    # Python http.server (no auto-open)
+./start.sh       # 启动服务并自动打开浏览器
+./stop.sh        # 停止服务
+npm start        # 同上
+npm run serve    # 仅启动 Python 服务（不打开浏览器）
 ```
 
-Open `http://localhost:8080` in a browser. Works on mobile + desktop.
+浏览器访问 `http://localhost:8080`，支持手机和电脑。
 
-## Gameplay
+## 玩法
 
-Explore procedurally generated dungeons. When you bump into a monster, enter **card battle** (Slay the Spire-style):
+探索程序生成的地牢，撞到怪物进入**卡牌战斗**（类似《杀戮尖塔》）：
 
-- **Energy**: 3 per turn — spend on cards
-- **Cards**: Attack, defend, apply status effects, buff yourself
-- **Intents**: Monsters show what they'll do (attack / buff / debuff)
-- **Status effects**: Strength, Dexterity, Vulnerable, Weak, Poison
-- **Rewards**: After victory, ~40% chance to choose 1 of 3 cards to add to your deck. Deck persists between battles.
-- **Deck viewer**: Tap "📋 卡组" in the HUD to inspect your deck anytime
-- **Progression**: Enemies scale with depth. Deeper = more HP, block, and special abilities
+- **能量**：每回合 3 点，用来出牌
+- **卡牌**：攻击、防御、状态效果、增益
+- **意图**：怪物会显示下一步行动（攻击 / 增益 / 减益）
+- **状态效果**：力量、敏捷、易伤、脆弱、中毒
+- **奖励**：胜利后约 40% 概率获得 3 选 1 卡牌，牌组跨战斗继承
+- **查看卡组**：点击 HUD 上的「📋 卡组」随时查看
+- **成长**：敌人随深度增强，更深处有更高 HP、格挡和特殊能力
 
-## Architecture
+## 项目结构
 
 ```
-index.html          ← Load Phaser (local lib/phaser.min.js) + ES module entry
-lib/                ← Phaser.js 3.60 (vendored, no CDN dependency)
+index.html          ← 入口（加载本地 lib/phaser.min.js + ES 模块）
+lib/                ← Phaser.js 3.60（本地化，不依赖 CDN）
 js/
-├── main.js         ← Phaser config, shared instance wiring
+├── main.js         ← Phaser 配置，共享实例连接
 ├── core/
-│   ├── EventBus.js    ← Pub/sub decoupling all systems
-│   ├── Entity.js      ← Component entity (addComponent / getComponent)
-│   ├── GameManager.js ← Central state, entity registry, level transitions
-│   ├── PluginSystem.js← Plugin registration + lifecycle
-│   └── TurnSystem.js  ← Explore-mode turn loop (chase, no explore attacks)
+│   ├── EventBus.js    ← 发布/订阅，解耦所有系统
+│   ├── Entity.js      ← 组件实体（addComponent / getComponent）
+│   ├── GameManager.js ← 核心状态、实体注册、楼层切换
+│   ├── PluginSystem.js← 插件注册与生命周期
+│   └── TurnSystem.js  ← 探索模式回合循环（怪物追击）
 ├── entities/
-│   └── factories.js   ← Entity factory functions (player, monsters, items)
+│   └── factories.js   ← 实体工厂（玩家、怪物、物品）
 ├── systems/
-│   ├── MapSystem.js   ← Random dungeon generation (rooms + corridors)
-│   ├── FOVSystem.js   ← Bresenham raycasting field-of-view
-│   ├── CombatSystem.js← Basic melee resolution (used outside card battles)
-│   ├── CardSystem.js  ← Card definitions, deck management
-│   └── BattleSystem.js← Card battle state machine, status effects, rewards
+│   ├── MapSystem.js   ← 随机地牢生成（房间 + 走廊）
+│   ├── FOVSystem.js   ← Bresenham 射线视野
+│   ├── CombatSystem.js← 基础近战（卡牌战斗外用）
+│   ├── CardSystem.js  ← 卡牌定义、牌组管理
+│   └── BattleSystem.js← 卡牌战斗状态机、状态效果、奖励
 ├── scenes/
-│   └── GameScene.js   ← Phaser scene: rendering, input (swipe/d-pad/kbd), HUD, battle UI
+│   └── GameScene.js   ← Phaser 场景：渲染、输入、HUD、战斗 UI
 └── plugins/
-    ├── registry.js    ← Built-in plugin registration
-    ├── template.js    ← Plugin creation template with event reference
-    └── example-xp.js  ← XP / leveling example plugin
+    ├── registry.js    ← 内置插件注册
+    ├── template.js    ← 插件创建模板（含事件参考）
+    └── example-xp.js  ← 经验/升级示例插件
 ```
 
-### Key Design Decisions
+### 核心设计理念
 
-- **No build step**: ES modules loaded directly in the browser. Phaser from CDN.
-- **Event-driven**: All inter-system communication via EventBus. Plugins hook into events.
-- **Entity-Component**: `entity.addComponent('stats', { hp: 30 })` — easy to extend.
-- **Plugin system**: New mechanics are self-contained plugins, no core modification needed.
+- **无需构建**：ES 模块直接在浏览器加载，Phaser 本地化
+- **事件驱动**：所有系统间通过 EventBus 通信，插件通过事件接入
+- **实体组件**：`entity.addComponent('stats', { hp: 30 })` — 易于扩展
+- **插件系统**：新机制封装为独立插件，无需修改核心
 
-### Available Events (for plugins)
+### 插件可用事件
 
 `game:init` `game:newLevel` `game:over`
 `turn:before` `turn:afterPlayer` `turn:afterEnemies` `turn:end`
@@ -74,9 +74,9 @@ js/
 `battle:playerBuff` `battle:statusApplied` `battle:enemyBuff` `battle:enemyDebuff`
 `plugin:loaded` `plugin:unloaded`
 
-## Adding New Cards
+## 添加新卡牌
 
-Edit `js/systems/CardSystem.js` and add an entry to `CARD_DB`:
+编辑 `js/systems/CardSystem.js`，在 `CARD_DB` 中添加：
 
 ```javascript
 { id:'fireball', name:'火球', cost:2,
@@ -84,35 +84,35 @@ Edit `js/systems/CardSystem.js` and add an entry to `CARD_DB`:
   desc:'15 伤害 + 脆弱 1 层', type:'attack', rarity:'common' },
 ```
 
-## Adding New Monsters
+## 添加新怪物
 
-Edit `js/entities/factories.js` and add to `MONSTER_TEMPLATES`:
+编辑 `js/entities/factories.js`，添加到 `MONSTER_TEMPLATES`：
 
 ```javascript
-// [name, glyph, color, hp, atk, def, xp, minDepth]
+// [名称, 字符, 颜色, HP, 攻击, 防御, XP, 最低深度]
 ['恶魔', 'D', '#ff4444', 40, 8, 3, 40, 5],
 ```
 
-## Adding New Game Mechanics
+## 添加新机制
 
-Copy `js/plugins/template.js` → `js/plugins/my-plugin.js`, implement event handlers, and register in `js/plugins/registry.js`.
+复制 `js/plugins/template.js` → `js/plugins/my-plugin.js`，实现事件处理器，然后在 `js/plugins/registry.js` 中注册。
 
-## Controls
+## 操作说明
 
-| Action | Keyboard | Mobile |
-|--------|----------|--------|
-| Move | WASD / Arrow keys | Swipe or virtual d-pad (bottom-right) |
-| Wait | `.` | — |
-| Interact / Pick up | `Enter` / `,` / `g` | Tap game area |
-| Descend stairs | `>` | Tap d-pad center (⬇) |
-| View deck | — | Tap "📋 卡组" in HUD |
-| Play card | — | Tap card in battle |
-| End turn | — | Tap "结束回合" in battle |
+| 操作 | 键盘 | 手机 |
+|------|------|------|
+| 移动 | WASD / 方向键 | 滑动或方向键（右下角） |
+| 等待 | `.` | — |
+| 交互 / 拾取 | `Enter` / `,` / `g` | 点击游戏区域 |
+| 下楼 | `>` | 点击方向键中间 (⬇) |
+| 查看卡组 | — | 点击 HUD 上的「📋 卡组」 |
+| 出牌 | — | 战斗中点击卡牌 |
+| 结束回合 | — | 点击「结束回合」按钮 |
 
-## Tech Stack
+## 技术栈
 
-- **Runtime**: Browser (Chrome, Safari, Firefox)
-- **Engine**: Phaser.js 3.60 (vendored in `lib/`)
-- **Language**: JavaScript (ES Modules)
-- **Dev server**: Python / Node http-server
-- **No dependencies, no build step**
+- **运行环境**：浏览器（Chrome、Safari、Firefox）
+- **引擎**：Phaser.js 3.60（本地 `lib/`）
+- **语言**：JavaScript（ES Modules）
+- **开发服务器**：Python / Node http-server
+- **无依赖、无构建步骤**
