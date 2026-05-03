@@ -1,0 +1,7 @@
+{
+  "name": "chaos-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Extensible roguelike framework built with Phaser.js",
+  "type": "module"
+}
