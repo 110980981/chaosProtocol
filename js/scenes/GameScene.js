@@ -27,6 +27,7 @@ export class GameScene extends Phaser.Scene {
     this.mode = 'explore';
     this._battleDir = null;
     this.battleUI = [];    // Battle UI elements
+    this.deckUI = [];      // Deck view UI elements
     this.selectedCard = -1;
   }
 
@@ -144,6 +145,11 @@ export class GameScene extends Phaser.Scene {
     this.hudBg = this.add.rectangle(0, 0, this.scale.width, 24, 0x000000, 0.8)
       .setOrigin(0, 0).setScrollFactor(0).setDepth(20);
     this.hudL = this.add.text(6, 4, '', style).setScrollFactor(0).setDepth(21);
+    // Deck button on the right side of HUD
+    this.hudDeckBtn = this.add.text(this.scale.width - 6, 4, '📋 卡组', {
+      ...style, color: '#8cf'
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(21).setInteractive();
+    this.hudDeckBtn.on('pointerdown', () => { if (!this.gameOver) this._showDeck(); });
   }
 
   _updateHUD() {
@@ -151,8 +157,9 @@ export class GameScene extends Phaser.Scene {
     if (!p) return;
     const s = p.getComponent('stats');
     const hpBar = this._bar(s.hp, s.maxHp, 10);
+    const deckSize = this.battleSystem?.persistentDeck?.length ?? 0;
     this.hudL.setText(
-      `HP:${hpBar} ${s.hp}/${s.maxHp}  ATK:${s.attack}  DEF:${s.defense}  深度:${this.gm.depth}  🗘${this.gm.turn}`
+      `HP:${hpBar} ${s.hp}/${s.maxHp}  ATK:${s.attack}  DEF:${s.defense}  牌组:${deckSize}  深度:${this.gm.depth}`
     );
     this.hudBg.setSize(this.scale.width, 24);
   }
@@ -202,7 +209,7 @@ export class GameScene extends Phaser.Scene {
 
     const dirs = [
       { ch:'↖', dx:-1, dy:-1 }, { ch:'↑', dx:0, dy:-1 }, { ch:'↗', dx:1, dy:-1 },
-      { ch:'←', dx:-1, dy:0 },  { ch:'·', dx:0, dy:0 },  { ch:'→', dx:1, dy:0 },
+      { ch:'←', dx:-1, dy:0 },  { ch:'⬇', dx:0, dy:0, stairs:true },  { ch:'→', dx:1, dy:0 },
       { ch:'↙', dx:-1, dy:1 },  { ch:'↓', dx:0, dy:1 },  { ch:'↘', dx:1, dy:1 },
     ];
 
@@ -210,25 +217,29 @@ export class GameScene extends Phaser.Scene {
       const col = i % 3;
       const row = Math.floor(i / 3);
       const bx = ox + col * (size + gap);
+      const isStairs = d.stairs;
+      const bgColor = isStairs ? 0x224466 : 0x333333;
       const by = oy + row * (size + gap);
 
-      const bg = this.add.rectangle(bx + size / 2, by + size / 2, size, size, 0x333333, 0.5)
+      const bg = this.add.rectangle(bx + size / 2, by + size / 2, size, size, bgColor, 0.5)
         .setScrollFactor(0).setDepth(25).setInteractive({ useHandCursor: false });
 
       const txt = this.add.text(bx + size / 2, by + size / 2, d.ch, {
-        fontSize: `${size - 8}px`, color: '#ccc', fontFamily: 'monospace'
+        fontSize: `${size - 8}px`, color: isStairs ? '#8cf' : '#ccc', fontFamily: 'monospace'
       }).setOrigin(0.5).setScrollFactor(0).setDepth(26);
 
       bg.on('pointerdown', () => {
         if (this.gameOver || this.mode === 'battle') return;
-        bg.setFillStyle(0x666666, 0.7);
+        bg.setFillStyle(isStairs ? 0x446688 : 0x666666, 0.7);
+        if (isStairs) { this._stairs(); return; }
         this._handleAction(d.dx, d.dy);
       });
-      bg.on('pointerup', () => bg.setFillStyle(0x333333, 0.5));
-      bg.on('pointerout', () => bg.setFillStyle(0x333333, 0.5));
+      bg.on('pointerup', () => bg.setFillStyle(bgColor, 0.5));
+      bg.on('pointerout', () => bg.setFillStyle(bgColor, 0.5));
 
       this.dpadButtons.push(bg, txt);
     });
+
   }
 
   /* ─── SWIPE / TAP ─── */
@@ -429,6 +440,7 @@ export class GameScene extends Phaser.Scene {
 
   /* ─── CARD BATTLE ─── */
   _enterBattle(enemy, dx, dy) {
+    this._closeDeck();
     this._battleDir = { dx, dy };
     // If enemy is already dead, just clean up and step forward
     const es = enemy.getComponent('stats');
@@ -699,28 +711,109 @@ export class GameScene extends Phaser.Scene {
     // This catches taps on empty areas for logging
   }
 
+  /* ─── Deck viewer ─── */
+  _showDeck() {
+    // Close existing if open
+    this._closeDeck();
+
+    const sw = this.scale.width, sh = this.scale.height;
+    const deck = this.battleSystem?.persistentDeck || [];
+    const ui = [];
+
+    // Overlay
+    ui.push(this.add.rectangle(sw/2, sh/2, sw, sh, 0x000000, 0.92)
+      .setScrollFactor(0).setDepth(50).setInteractive());
+
+    // Title
+    ui.push(this.add.text(sw/2, 12, `我的卡组（${deck.length} 张）`, {
+      fontSize: '16px', color: '#ff0', fontFamily: 'monospace'
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51));
+
+    // Close button (top-right)
+    const closeBtn = this.add.text(sw - 10, 10, '✕ 关闭', {
+      fontSize: '14px', color: '#f88', fontFamily: 'monospace'
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(51).setInteractive();
+    closeBtn.on('pointerdown', () => this._closeDeck());
+    ui.push(closeBtn);
+
+    // Card grid
+    const cardW = Math.min(110, Math.floor((sw - 24) / 3));
+    const cardH = 52;
+    const gapX = 4, gapY = 4;
+    const cols = Math.max(2, Math.floor((sw - 16) / (cardW + gapX)));
+    const startX = (sw - cols * (cardW + gapX) + gapX) / 2;
+    const startY = 36;
+
+    // Group cards by type for better readability
+    const sorted = [...deck];
+    const typeOrder = { 'attack': 0, 'skill': 1, 'power': 2 };
+    sorted.sort((a, b) => (typeOrder[a.type] ?? 9) - (typeOrder[b.type] ?? 9) || a.cost - b.cost);
+
+    sorted.forEach((card, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const cx = startX + col * (cardW + gapX);
+      const cy = startY + row * (cardH + gapY);
+
+      const isPlayable = card.type === 'attack' || card.type === 'skill' || card.type === 'power';
+      const bgColor = card.type === 'attack' ? 0x553333 : card.type === 'skill' ? 0x335566 : 0x444466;
+      const bg = this.add.rectangle(cx + cardW/2, cy + cardH/2, cardW, cardH, bgColor, 0.85)
+        .setScrollFactor(0).setDepth(51);
+      const border = this.add.rectangle(cx + cardW/2, cy + cardH/2, cardW, cardH)
+        .setScrollFactor(0).setDepth(50).setStrokeStyle(1, 0x888888);
+      ui.push(bg, border);
+
+      // Cost
+      ui.push(this.add.text(cx + 3, cy + 3, `${card.cost}`, {
+        fontSize: '13px', color: '#ffcc00', fontFamily: 'monospace'
+      }).setScrollFactor(0).setDepth(52));
+
+      // Name
+      ui.push(this.add.text(cx + 18, cy + 2, card.name, {
+        fontSize: '12px', color: '#fff', fontFamily: 'monospace'
+      }).setScrollFactor(0).setDepth(52));
+
+      // Description
+      ui.push(this.add.text(cx + cardW/2, cy + 22, card.desc, {
+        fontSize: '9px', color: '#aaf', fontFamily: 'monospace', align: 'center',
+        wordWrap: { width: cardW - 8 }
+      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(52));
+
+      // Type tag
+      const typeLabel = card.rarity === 'rare' ? '★' : card.type === 'attack' ? '⚔' : card.type === 'skill' ? '🛡' : '✦';
+      ui.push(this.add.text(cx + cardW - 4, cy + 2, typeLabel, {
+        fontSize: '10px', color: card.rarity === 'rare' ? '#ff0' : '#888', fontFamily: 'monospace'
+      }).setOrigin(1, 0).setScrollFactor(0).setDepth(52));
+    });
+
+    this.deckUI = ui;
+  }
+
+  _closeDeck() {
+    this.deckUI.forEach(o => o.destroy());
+    this.deckUI = [];
+  }
+
   _showRewards() {
     this._clearBattleUI();
     const sw = this.scale.width, sh = this.scale.height;
     const bs = this.battleSystem;
     const cards = bs.rewardCards || [];
+    const hasCards = cards.length > 0;
     const ui = [];
 
     // Background
     ui.push(this.add.rectangle(sw/2, sh/2, sw, sh, 0x000000, 0.9).setScrollFactor(0).setDepth(40));
 
-    // Title
-    ui.push(this.add.text(sw/2, 30, '⚡ 战斗胜利 — 选择一张牌加入牌组', {
-      fontSize: '16px', color: '#ff0', fontFamily: 'monospace'
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(41));
+    if (hasCards) {
+      // Title for card reward
+      ui.push(this.add.text(sw/2, 20, '⚡ 战斗胜利', {
+        fontSize: '18px', color: '#ff0', fontFamily: 'monospace'
+      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(41));
+      ui.push(this.add.text(sw/2, 44, `选择一张牌加入牌组（当前 ${bs.persistentDeck.length} 张）`, {
+        fontSize: '12px', color: '#aaa', fontFamily: 'monospace'
+      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(41));
 
-    if (cards.length === 0) {
-      ui.push(this.add.text(sw/2, sh/2, '无可用卡牌', {
-        fontSize: '18px', color: '#888', fontFamily: 'monospace'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(41));
-      const next = () => { this._clearBattleUI(); this._exitBattle(true); };
-      this.input.once('pointerdown', next);
-    } else {
       const cardW = Math.min(100, (sw - 40) / Math.min(cards.length, 3));
       const cardH = 100;
       const totalW = cards.length * (cardW + 6) - 6;
@@ -759,6 +852,22 @@ export class GameScene extends Phaser.Scene {
       }).setOrigin(0.5).setScrollFactor(0).setDepth(42).setInteractive();
       skipBtn.on('pointerdown', () => { this._clearBattleUI(); this._exitBattle(true); });
       ui.push(skipBtn);
+    } else {
+      // No card reward this time — just show recovery info
+      ui.push(this.add.text(sw/2, sh/2 - 20, '⚡ 战斗胜利', {
+        fontSize: '20px', color: '#ff0', fontFamily: 'monospace'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(41));
+      ui.push(this.add.text(sw/2, sh/2 + 15, `牌组 ${bs.persistentDeck.length} 张 · 生命恢复 10%`, {
+        fontSize: '13px', color: '#4f4', fontFamily: 'monospace'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(41));
+      ui.push(this.add.text(sw/2, sh/2 + 50, '[ 点击继续 ]', {
+        fontSize: '14px', color: '#888', fontFamily: 'monospace'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(42));
+
+      const next = () => { this._clearBattleUI(); this._exitBattle(true); };
+      this.time.delayedCall(400, () => {
+        this.input.once('pointerdown', next);
+      });
     }
 
     this.battleUI = ui;

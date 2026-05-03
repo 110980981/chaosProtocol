@@ -7,8 +7,10 @@ Built with [Phaser.js 3](https://phaser.io/) — no build step, open in a browse
 ## Quick Start
 
 ```bash
-python3 -m http.server 8080
-# or: npx http-server -p 8080
+./start.sh       # Start server and open browser
+./stop.sh        # Stop server
+npm start        # Same as ./start.sh
+npm run serve    # Python http.server (no auto-open)
 ```
 
 Open `http://localhost:8080` in a browser. Works on mobile + desktop.
@@ -21,13 +23,15 @@ Explore procedurally generated dungeons. When you bump into a monster, enter **c
 - **Cards**: Attack, defend, apply status effects, buff yourself
 - **Intents**: Monsters show what they'll do (attack / buff / debuff)
 - **Status effects**: Strength, Dexterity, Vulnerable, Weak, Poison
-- **Rewards**: After each victory, choose 1 of 3 cards to add to your deck
+- **Rewards**: After victory, ~40% chance to choose 1 of 3 cards to add to your deck. Deck persists between battles.
+- **Deck viewer**: Tap "📋 卡组" in the HUD to inspect your deck anytime
 - **Progression**: Enemies scale with depth. Deeper = more HP, block, and special abilities
 
 ## Architecture
 
 ```
-index.html          ← Load Phaser CDN + ES module entry
+index.html          ← Load Phaser (local lib/phaser.min.js) + ES module entry
+lib/                ← Phaser.js 3.60 (vendored, no CDN dependency)
 js/
 ├── main.js         ← Phaser config, shared instance wiring
 ├── core/
@@ -98,16 +102,17 @@ Copy `js/plugins/template.js` → `js/plugins/my-plugin.js`, implement event han
 | Action | Keyboard | Mobile |
 |--------|----------|--------|
 | Move | WASD / Arrow keys | Swipe or virtual d-pad (bottom-right) |
-| Wait | `.` | Tap d-pad center |
+| Wait | `.` | — |
 | Interact / Pick up | `Enter` / `,` / `g` | Tap game area |
-| Descend stairs | `>` | Walk onto stairs |
+| Descend stairs | `>` | Tap d-pad center (⬇) |
+| View deck | — | Tap "📋 卡组" in HUD |
 | Play card | — | Tap card in battle |
 | End turn | — | Tap "结束回合" in battle |
 
 ## Tech Stack
 
 - **Runtime**: Browser (Chrome, Safari, Firefox)
-- **Engine**: Phaser.js 3.60 (CDN)
+- **Engine**: Phaser.js 3.60 (vendored in `lib/`)
 - **Language**: JavaScript (ES Modules)
 - **Dev server**: Python / Node http-server
 - **No dependencies, no build step**

@@ -13,6 +13,7 @@ export class BattleSystem {
   constructor(eventBus, combatSystem) {
     this.eb = eventBus;
     this.combat = combatSystem;
+    this.persistentDeck = [];
     this.reset();
   }
 
@@ -57,7 +58,11 @@ export class BattleSystem {
     this.reset();
     this.player = player;
     this.enemies = enemies;
-    this.drawPile = shuffleArray([...createStarterDeck()]);
+    // Initialize persistent deck on first battle, then carry forward
+    if (this.persistentDeck.length === 0) {
+      this.persistentDeck = [...createStarterDeck()];
+    }
+    this.drawPile = shuffleArray([...this.persistentDeck]);
     this.discardPile = [];
     this.energy = this.maxEnergy;
 
@@ -297,7 +302,12 @@ export class BattleSystem {
 
   /* ─── Post-battle rewards ─── */
   _generateRewards() {
-    this.rewardCards = getRandomCards(3);
+    // 40% chance to offer card rewards, to control deck growth
+    if (Math.random() < 0.4) {
+      this.rewardCards = getRandomCards(3);
+    } else {
+      this.rewardCards = null;
+    }
     // Small HP recovery after battle
     const ps = this.player.getComponent('stats');
     if (ps) {
@@ -310,6 +320,7 @@ export class BattleSystem {
   addRewardCard(cardIndex) {
     if (!this.rewardCards || cardIndex >= this.rewardCards.length) return null;
     const card = this.rewardCards[cardIndex];
+    this.persistentDeck.push(card);
     this.drawPile.push(card);
     this.rewardCards = null;
     return card;
