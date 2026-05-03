@@ -27,6 +27,36 @@ npm run serve    # 仅启动 Python 服务（不打开浏览器）
 - **查看卡组**：点击 HUD 上的「📋 卡组」随时查看
 - **成长**：敌人随深度增强，更深处有更高 HP、格挡和特殊能力
 
+## 流派系统（v2.0）
+
+每次游戏开始前，选择 **1~3 个流派**，它们决定本局可获得哪些卡牌：
+
+| 流派 | 主题 | 卡牌数 | 核心玩法 |
+|------|------|--------|---------|
+| ⚔ **狂战** | 力量 & 爆发 | 7张 | 叠力量 → 多段攻击力倍乘 |
+| 🛡 **铁壁** | 防御 & 反击 | 7张 | 叠格挡 → 盾牌猛击一锤定音 |
+| 🌑 **暗影** | 毒素 & 削弱 | 7张 | 叠毒 → 毒爆翻倍 → 毒伤倍乘 |
+| ✦ **圣光** | 治愈 & 祝福 | 6张 | 叠 buff → 圣洁 buff 数倍乘 |
+| 🌿 **自然** | 均衡 & 生长 | 7张 | 力敏双修，万物生长 |
+
+### 协同机制（杀戮尖塔风格）
+
+卡牌之间存在明确的连招配合：
+
+**狂战 连招：** 剑舞 → 连击(力量×2) → 狂暴打击(6+2×力量)
+
+**铁壁 连招：** 铁壁 → 铁甲(格挡不消失) → 盾牌猛击(格挡→伤害)
+
+**暗影 连招：** 毒刺 → 毒爆(中毒翻倍!) → 暗影步(6+2×中毒)
+
+**圣光 连招：** 祝福(0费双buff) → 圣洁(4+2×[力+敏])
+
+**自然 连招：** 森林祝福(+力) → 自然之怒(力增伤/敏增盾)
+
+### 流派选择界面
+
+开局展示流派选择面板，可随时重开游戏更换搭配。不同流派组合带来完全不同的 Build 体验。
+
 ## 项目结构
 
 ```
@@ -76,13 +106,46 @@ js/
 
 ## 添加新卡牌
 
-编辑 `js/systems/CardSystem.js`，在 `CARD_DB` 中添加：
+编辑 `js/systems/CardSystem.js`，在对应流派的 `CARD_DB` 区域添加：
 
 ```javascript
+// 简单卡牌
 { id:'fireball', name:'火球', cost:2,
   effects:[{type:'damage',value:15},{type:'status',status:'vuln',value:1}],
-  desc:'15 伤害 + 脆弱 1 层', type:'attack', rarity:'common' },
+  desc:'15 伤害 + 脆弱 1 层', type:'attack', rarity:'common', archetype:'berserker' },
+
+// 协同卡牌（力量倍乘）
+{ id:'heavy_blow', name:'重锤', cost:2,
+  effects:[{type:'damage',value:10, per_str:3}],
+  desc:'10 伤害 +3×力量', type:'attack', rarity:'rare', archetype:'berserker' },
+
+// 协同卡牌（格挡转化）
+{ id:'body_slam', name:'冲锋', cost:1,
+  effects:[{type:'block_damage'}],
+  desc:'造成格挡值的伤害', type:'attack', rarity:'common', archetype:'ironwall' },
+
+// 协同卡牌（中毒倍乘）
+{ id:'catalyst', name:'催化', cost:1,
+  effects:[{type:'multiply_status',status:'poison',multiplier:3}],
+  desc:'中毒层数 ×3', type:'skill', rarity:'rare', archetype:'shadow' },
 ```
+
+### 可用效果类型
+
+| 类型 | 参数 | 说明 |
+|------|------|------|
+| `damage` | `value`, `target:'all'`, `per_str`, `per_poison`, `per_dex` | 伤害（支持协同倍乘） |
+| `block` | `value`, `per_dex` | 格挡 |
+| `heal` | `value` | 治疗 |
+| `buff` | `stat:'strength'/'dexterity'`, `value` | 增益 |
+| `status` | `status`, `value`, `target:'all'` | 状态效果 |
+| `block_damage` | — | 格挡值转化为伤害 |
+| `multiply_status` | `status`, `multiplier` | 状态层数翻倍 |
+| `retain_block` | — | 本回合格挡不消失 |
+
+## 添加新流派
+
+在 `js/systems/CardSystem.js` 的 `ARCHETYPES` 中添加定义，然后在 `CARD_DB` 中添加该流派卡牌，最后在 `getRandomCards` 中自动生效：
 
 ## 添加新怪物
 

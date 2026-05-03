@@ -1,4 +1,4 @@
-import { shuffleArray, createStarterDeck, getRandomCards, getRandomCard } from './CardSystem.js';
+import { shuffleArray, createStarterDeck, getRandomCards } from './CardSystem.js';
 
 /** Status effect helpers */
 const STATUS = {
@@ -10,9 +10,10 @@ const STATUS = {
 };
 
 export class BattleSystem {
-  constructor(eventBus, combatSystem) {
+  constructor(eventBus, combatSystem, selectedArchetypes = null) {
     this.eb = eventBus;
     this.combat = combatSystem;
+    this.selectedArchetypes = selectedArchetypes;
     this.persistentDeck = [];
     this.reset();
   }
@@ -28,7 +29,8 @@ export class BattleSystem {
     this.discardPile = [];
     this.turn = 0;
     this.intents = new Map();
-    this.rewardCards = null; // set after victory
+    this.rewardCards = null;
+    this._retainBlock = false;
   }
 
   /* ─── Status helpers ─── */
@@ -191,7 +193,11 @@ export class BattleSystem {
           const targets = eff.target === 'all' ? this.enemies : [primaryTarget];
           for (const t of targets) {
             if (!t || t.getComponent('stats').hp <= 0) continue;
-            const rawDmg = eff.value;
+            let rawDmg = eff.value || 0;
+            // Synergy scaling (Slay the Spire style)
+            if (eff.per_str) rawDmg += this._getStatusEffect(this.player, 'strength') * eff.per_str;
+            if (eff.per_dex) rawDmg += this._getStatusEffect(this.player, 'dexterity') * eff.per_dex;
+            if (eff.per_poison) rawDmg += this._getStatusEffect(t, 'poison') * eff.per_poison;
             const finalDmg = this._modDamage(rawDmg, this.player, t);
             const ts = t.getComponent('stats');
             ts.hp -= finalDmg;
@@ -205,7 +211,11 @@ export class BattleSystem {
         }
         case 'block': {
           const ps = this.player.getComponent('stats');
-          if (ps) ps.block = (ps.block || 0) + this._modBlock(eff.value, this.player);
+          if (ps) {
+            let blockVal = eff.value || 0;
+            if (eff.per_dex) blockVal += this._getStatusEffect(this.player, 'dexterity') * eff.per_dex;
+            ps.block = (ps.block || 0) + this._modBlock(blockVal, this.player);
+          }
           break;
         }
         case 'heal': {
@@ -220,9 +230,44 @@ export class BattleSystem {
           break;
         }
         case 'status': {
-          const es = this._ensureStatuses(primaryTarget);
-          es[eff.status] = (es[eff.status] || 0) + eff.value;
-          this.eb.emit('battle:statusApplied', { target: primaryTarget, status: eff.status, value: eff.value });
+          const targets = eff.target === 'all' ? this.enemies : [primaryTarget];
+          for (const t of targets) {
+            if (!t || t.getComponent('stats').hp <= 0) continue;
+            const es = this._ensureStatuses(t);
+            es[eff.status] = (es[eff.status] || 0) + eff.value;
+            this.eb.emit('battle:statusApplied', { target: t, status: eff.status, value: eff.value });
+          }
+          break;
+        }
+
+        // ── Slay the Spire-style synergy effects ──
+        case 'block_damage': {
+          const bd = this.player.getComponent('stats');
+          if (!bd || !bd.block) break;
+          const bdDmg = bd.block * (eff.multiplier || 1);
+          bd.block = 0;
+          const bdTarget = primaryTarget;
+          if (!bdTarget || bdTarget.getComponent('stats').hp <= 0) break;
+          const bdFinal = this._modDamage(bdDmg, this.player, bdTarget);
+          const bdTs = bdTarget.getComponent('stats');
+          bdTs.hp -= bdFinal;
+          this.eb.emit('combat:melee', { attacker:this.player, defender:bdTarget, damage:bdFinal });
+          const bdPs = this.player.getComponent('stats');
+          if (bdPs) bdPs.hp = Math.min(bdPs.maxHp, bdPs.hp + Math.floor(bdFinal * 0.1));
+          if (bdTs.hp <= 0) this.eb.emit('entity:death', { entity:bdTarget, killer:this.player });
+          break;
+        }
+        case 'multiply_status': {
+          const msTargets = eff.target === 'all' ? this.enemies : [primaryTarget];
+          for (const t of msTargets) {
+            if (!t || t.getComponent('stats').hp <= 0) continue;
+            const es = this._ensureStatuses(t);
+            es[eff.status] = (es[eff.status] || 0) * eff.multiplier;
+          }
+          break;
+        }
+        case 'retain_block': {
+          this._retainBlock = true;
           break;
         }
       }
@@ -255,9 +300,10 @@ export class BattleSystem {
     for (const enemy of this.enemies) this._tickStatuses(enemy);
     this._tickStatuses(this.player);
 
-    // Block expires
+    // Block expires (unless retained — like Blur in Slay the Spire)
     const ps = this.player.getComponent('stats');
-    if (ps) ps.block = 0;
+    if (!this._retainBlock && ps) ps.block = 0;
+    this._retainBlock = false;
 
     // Cleanup dead enemies
     this.enemies = this.enemies.filter(e => e.getComponent('stats').hp > 0);
@@ -304,7 +350,7 @@ export class BattleSystem {
   _generateRewards() {
     // 40% chance to offer card rewards, to control deck growth
     if (Math.random() < 0.4) {
-      this.rewardCards = getRandomCards(3);
+      this.rewardCards = getRandomCards(3, this.selectedArchetypes);
     } else {
       this.rewardCards = null;
     }

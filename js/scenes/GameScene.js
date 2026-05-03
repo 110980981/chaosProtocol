@@ -4,6 +4,7 @@ import { MapSystem, TILE, VIS } from '../systems/MapSystem.js';
 import { FOVSystem } from '../systems/FOVSystem.js';
 import { CombatSystem } from '../systems/CombatSystem.js';
 import { BattleSystem } from '../systems/BattleSystem.js';
+import { ARCHETYPES, getArchetypeCardCount } from '../systems/CardSystem.js';
 import { createPlayer } from '../entities/factories.js';
 
 export class GameScene extends Phaser.Scene {
@@ -41,13 +42,20 @@ export class GameScene extends Phaser.Scene {
     this.mapSystem = new MapSystem(60, 40);
     this.fovSystem = new FOVSystem(this.mapSystem);
     this.combatSystem = new CombatSystem(this.eb);
-    this.battleSystem = new BattleSystem(this.eb, this.combatSystem);
     this.gm.init(this.mapSystem, this.combatSystem);
     this.turnSystem = new TurnSystem(this.gm, this.eb);
 
     this.gfx = this.add.graphics();
 
     this.gm.player = createPlayer(0, 0);
+
+    // Show archetype selection before starting the game
+    this._showArchetypeSelection();
+  }
+
+  _startGame(selectedArchetypes) {
+    this.battleSystem = new BattleSystem(this.eb, this.combatSystem, selectedArchetypes);
+
     this.gm.newLevel(this.gm.depth);
     this.fovSystem.compute(this.gm.player.x, this.gm.player.y);
 
@@ -64,6 +72,98 @@ export class GameScene extends Phaser.Scene {
 
     this._renderAll();
     this._updateHUD();
+  }
+
+  _showArchetypeSelection() {
+    const sw = this.scale.width, sh = this.scale.height;
+    const MAX_SELECT = 3;
+    const selected = [];
+    const ui = [];
+    const archetypeIds = Object.keys(ARCHETYPES);
+
+    // Overlay
+    ui.push(this.add.rectangle(sw/2, sh/2, sw, sh, 0x000000, 0.95)
+      .setScrollFactor(0).setDepth(50));
+
+    // Title
+    ui.push(this.add.text(sw/2, 20, '⚡ 流派选择', {
+      fontSize: '22px', color: '#ff0', fontFamily: 'monospace'
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51));
+
+    // Subtitle
+    ui.push(this.add.text(sw/2, 50, '选择 1~3 个流派，决定本局可获得的卡牌', {
+      fontSize: '12px', color: '#aaa', fontFamily: 'monospace'
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51));
+
+    // Selected count display
+    const countTxt = this.add.text(sw/2, 70, '已选 0/3', {
+      fontSize: '14px', color: '#8cf', fontFamily: 'monospace'
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51);
+    ui.push(countTxt);
+
+    // Archetype card grid
+    const gap = 8;
+    const cols = 3;
+    const cardW = Math.min(140, (sw - 40 - gap * (cols - 1)) / cols);
+    const cardH = 78;
+    const rows = Math.ceil(archetypeIds.length / cols);
+    const gridW = cols * cardW + (cols - 1) * gap;
+    const gridH = rows * cardH + (rows - 1) * gap;
+    const gridX = (sw - gridW) / 2;
+    const gridY = 88;
+
+    archetypeIds.forEach((id, i) => {
+      const a = ARCHETYPES[id];
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const cx = gridX + col * (cardW + gap);
+      const cy = gridY + row * (cardH + gap);
+
+      const bg = this.add.rectangle(cx + cardW/2, cy + cardH/2, cardW, cardH, 0x333333, 0.9)
+        .setScrollFactor(0).setDepth(52).setInteractive();
+      const border = this.add.rectangle(cx + cardW/2, cy + cardH/2, cardW, cardH)
+        .setScrollFactor(0).setDepth(51).setStrokeStyle(2, 0x666666);
+      const nameTxt = this.add.text(cx + cardW/2, cy + 8, a.name, {
+        fontSize: '16px', color: '#fff', fontFamily: 'monospace'
+      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(53);
+      const descTxt = this.add.text(cx + cardW/2, cy + 30, a.desc, {
+        fontSize: '11px', color: '#aaa', fontFamily: 'monospace'
+      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(53);
+      const cntTxt = this.add.text(cx + cardW/2, cy + 52, `${getArchetypeCardCount(id)} 张卡牌`, {
+        fontSize: '10px', color: '#888', fontFamily: 'monospace'
+      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(53);
+
+      ui.push(bg, border, nameTxt, descTxt, cntTxt);
+
+      bg.on('pointerdown', () => {
+        const idx = selected.indexOf(id);
+        if (idx >= 0) {
+          selected.splice(idx, 1);
+          bg.setFillStyle(0x333333, 0.9);
+          border.setStrokeStyle(2, 0x666666);
+        } else if (selected.length < MAX_SELECT) {
+          selected.push(id);
+          bg.setFillStyle(a.color, 0.25);
+          border.setStrokeStyle(2, a.color);
+        }
+        countTxt.setText(`已选 ${selected.length}/${MAX_SELECT}`);
+        confirmBtn.setAlpha(selected.length > 0 ? 1 : 0.4);
+      });
+    });
+
+    // Confirm button
+    const confirmBtn = this.add.rectangle(sw/2, sh - 40, 200, 44, 0x448844, 0.9)
+      .setScrollFactor(0).setDepth(52).setInteractive().setAlpha(0.4);
+    const confirmTxt = this.add.text(sw/2, sh - 40, '开始探险', {
+      fontSize: '18px', color: '#fff', fontFamily: 'monospace'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(53);
+    ui.push(confirmBtn, confirmTxt);
+
+    confirmBtn.on('pointerdown', () => {
+      if (selected.length === 0) return;
+      ui.forEach(o => o.destroy());
+      this._startGame(selected);
+    });
   }
 
   /* ─── TILE SIZE ─── */
