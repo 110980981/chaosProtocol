@@ -1,5 +1,6 @@
 import { Entity } from './Entity.js';
 import * as Factories from '../entities/factories.js';
+import { BEHAVIOR } from '../entities/factories.js';
 
 export class GameManager {
   constructor(eventBus, pluginSystem) {
@@ -45,8 +46,31 @@ export class GameManager {
   }
 
   _spawnMonsters() {
+    const isBossFloor = this.depth > 0 && this.depth % 5 === 0;
+
     for (let i = 1; i < this.mapSystem.rooms.length; i++) {
       const r = this.mapSystem.rooms[i];
+      const roomType = this.mapSystem.roomTypes ? this.mapSystem.roomTypes[i] : 'normal';
+
+      if (isBossFloor && i === this.mapSystem.rooms.length - 1) {
+        // Boss in the last room on boss floors
+        const x = r.x + 1 + Math.floor(Math.random() * (r.w - 2));
+        const y = r.y + 1 + Math.floor(Math.random() * (r.h - 2));
+        this.addEntity(Factories.createBossMonster(x, y, this.depth));
+        continue;
+      }
+
+      if (roomType === 'treasure' || roomType === 'rest') continue;
+
+      // Elite rooms (marked during map gen): always spawn an elite
+      if (roomType === 'elite') {
+        const x = r.x + 1 + Math.floor(Math.random() * (r.w - 2));
+        const y = r.y + 1 + Math.floor(Math.random() * (r.h - 2));
+        this.addEntity(Factories.createEliteMonster(x, y, this.depth));
+        continue;
+      }
+
+      // Normal monster spawning
       const count = Math.random() < 0.4 + this.depth * 0.1
         ? 1 + Math.floor(Math.random() * (1 + Math.floor(this.depth / 2)))
         : 0;
@@ -65,6 +89,16 @@ export class GameManager {
       this.addEntity(Factories.createHealthPotion(r0.x + 1 + Math.floor(Math.random() * (r0.w - 2)), r0.y + 1 + Math.floor(Math.random() * (r0.h - 2))));
     }
     for (let i = 0; i < this.mapSystem.rooms.length; i++) {
+      const roomType = this.mapSystem.roomTypes ? this.mapSystem.roomTypes[i] : 'normal';
+
+      // Treasure rooms: spawn extra items
+      if (roomType === 'treasure') {
+        const r = this.mapSystem.rooms[i];
+        this.addEntity(Factories.createHealthPotion(r.cx - 1, r.cy, 25));
+        this.addEntity(Factories.createStrengthPotion(r.cx + 1, r.cy));
+        continue;
+      }
+
       if (Math.random() < 0.35) {
         const r = this.mapSystem.rooms[i];
         const x = r.x + 1 + Math.floor(Math.random() * (r.w - 2));

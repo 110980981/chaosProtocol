@@ -1,6 +1,29 @@
 export const TILE = { WALL: 0, FLOOR: 1 };
 export const VIS = { UNSEEN: 0, EXPLORED: 1, VISIBLE: 2 };
 
+/* ─── Room types ─── */
+export const ROOM_TYPE = {
+  NORMAL:   'normal',
+  TREASURE: 'treasure',
+  ELITE:    'elite',
+  REST:     'rest',
+};
+
+/* ─── Floor themes (for visual variety) ─── */
+export const FLOOR_THEMES = {
+  DUNGEON:  { wallColor: 0x1a1a1a, floorColor: 0x555555, name: '地牢' },
+  CAVE:     { wallColor: 0x1a221a, floorColor: 0x445544, name: '洞穴' },
+  CATACOMB: { wallColor: 0x221a1a, floorColor: 0x554444, name: '墓穴' },
+  ABYSS:    { wallColor: 0x1a1a22, floorColor: 0x444466, name: '深渊' },
+};
+
+function getFloorTheme(depth) {
+  if (depth >= 15) return FLOOR_THEMES.ABYSS;
+  if (depth >= 10) return FLOOR_THEMES.CATACOMB;
+  if (depth >= 5)  return FLOOR_THEMES.CAVE;
+  return FLOOR_THEMES.DUNGEON;
+}
+
 class Tile {
   constructor(type = TILE.WALL) { this.type = type; this.vis = VIS.UNSEEN; }
   get blocked() { return this.type === TILE.WALL; }
@@ -13,13 +36,17 @@ export class MapSystem {
     this.w = w; this.h = h;
     this.tiles = [];
     this.rooms = [];
+    this.roomTypes = [];
     this.roomConnections = [];
+    this.theme = FLOOR_THEMES.DUNGEON;
   }
 
   generate(depth = 1) {
     this.tiles = [];
     this.rooms = [];
+    this.roomTypes = [];
     this.roomConnections = [];
+    this.theme = getFloorTheme(depth);
 
     for (let y = 0; y < this.h; y++) {
       this.tiles[y] = [];
@@ -39,6 +66,58 @@ export class MapSystem {
       if (this.rooms.length > 0) this._connect(this.rooms[this.rooms.length - 1], room);
       this.rooms.push(room);
     }
+
+    this._assignRoomTypes(depth);
+  }
+
+  /**
+   * Assign special room types:
+   *   - First room: always normal (player spawn)
+   *   - Last room: always normal (stairs)
+   *   - Every 3rd room (if enough rooms): elite room (depth >= 2)
+   *   - Random treasure/rest rooms
+   */
+  _assignRoomTypes(depth) {
+    this.roomTypes = this.rooms.map((_, i) => ROOM_TYPE.NORMAL);
+
+    if (this.rooms.length < 4) return;
+
+    // Elite rooms (depth >= 2, one per level)
+    if (depth >= 2) {
+      const eliteIdx = 2 + Math.floor(Math.random() * Math.max(1, this.rooms.length - 4));
+      if (eliteIdx < this.rooms.length - 1) {
+        this.roomTypes[eliteIdx] = ROOM_TYPE.ELITE;
+      }
+    }
+
+    // Treasure room (one per level, not first/last/elite)
+    const treasureCandidates = this.rooms
+      .map((_, i) => i)
+      .filter(i => i > 0 && i < this.rooms.length - 1 && this.roomTypes[i] === ROOM_TYPE.NORMAL);
+    if (treasureCandidates.length > 0) {
+      const ti = treasureCandidates[Math.floor(Math.random() * treasureCandidates.length)];
+      this.roomTypes[ti] = ROOM_TYPE.TREASURE;
+    }
+
+    // Rest room (one per level, every 5 floors guaranteed)
+    if (depth % 5 === 0 || Math.random() < 0.2) {
+      const restCandidates = this.rooms
+        .map((_, i) => i)
+        .filter(i => i > 0 && i < this.rooms.length - 1 && this.roomTypes[i] === ROOM_TYPE.NORMAL);
+      if (restCandidates.length > 0) {
+        const ri = restCandidates[Math.floor(Math.random() * restCandidates.length)];
+        this.roomTypes[ri] = ROOM_TYPE.REST;
+      }
+    }
+  }
+
+  /** Get the theme-aware color for a tile given its visibility state */
+  getTileColor(tile, vis) {
+    if (vis === VIS.UNSEEN) return null;
+    if (vis === VIS.EXPLORED) {
+      return tile.type === TILE.FLOOR ? 0x333333 : Math.floor(this.theme.wallColor * 0.7);
+    }
+    return tile.type === TILE.FLOOR ? this.theme.floorColor : this.theme.wallColor;
   }
 
   _overlap(a, b) {

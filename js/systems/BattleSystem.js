@@ -1,4 +1,5 @@
 import { shuffleArray, createStarterDeck, getRandomCards } from './CardSystem.js';
+import { BEHAVIOR } from '../entities/factories.js';
 
 /** Status effect helpers */
 const STATUS = {
@@ -7,6 +8,20 @@ const STATUS = {
   poison: { name:'中毒',  color:'#44ff44' },
   strength:  { name:'力量',  color:'#ff4444' },
   dexterity: { name:'敏捷',  color:'#4488ff' },
+};
+
+/** Probability distributions per behavior type.
+ *  Each entry: { attack, buff, debuff, block } — weights for intent selection.
+ */
+const BEHAVIOR_WEIGHTS = {
+  [BEHAVIOR.AGGRESSIVE]: { attack: 80, buff: 10, debuff: 5, block: 5 },
+  [BEHAVIOR.DEFENSIVE]:  { attack: 40, buff: 10, debuff: 10, block: 40 },
+  [BEHAVIOR.STATUS]:     { attack: 40, buff: 10, debuff: 40, block: 10 },
+  [BEHAVIOR.BALANCED]:   { attack: 50, buff: 20, debuff: 15, block: 15 },
+  [BEHAVIOR.RITUALIST]:  { attack: 30, buff: 55, debuff: 10, block: 5 },
+  [BEHAVIOR.SWARM]:      { attack: 75, buff: 10, debuff: 10, block: 5 },
+  [BEHAVIOR.ELITE]:      { attack: 45, buff: 20, debuff: 15, block: 20 },
+  [BEHAVIOR.BOSS]:       { attack: 40, buff: 20, debuff: 25, block: 15 },
 };
 
 export class BattleSystem {
@@ -31,6 +46,7 @@ export class BattleSystem {
     this.intents = new Map();
     this.rewardCards = null;
     this._retainBlock = false;
+    this._permanentRetainBlock = false;
   }
 
   /* ─── Status helpers ─── */
@@ -56,10 +72,11 @@ export class BattleSystem {
   }
 
   /* ─── Battle start ─── */
-  start(player, enemies) {
+  start(player, enemies, depth = 1) {
     this.reset();
     this.player = player;
     this.enemies = enemies;
+    this.depth = depth;
     // Initialize persistent deck on first battle, then carry forward
     if (this.persistentDeck.length === 0) {
       this.persistentDeck = [...createStarterDeck()];
@@ -89,31 +106,121 @@ export class BattleSystem {
       if (enemy.getComponent('stats').hp <= 0) continue;
       const s = enemy.getComponent('stats');
       const es = this._ensureStatuses(enemy);
+      const info = enemy.getComponent('monsterInfo') || {};
+      const behavior = info.behavior || BEHAVIOR.AGGRESSIVE;
+      const weights = BEHAVIOR_WEIGHTS[behavior] || BEHAVIOR_WEIGHTS[BEHAVIOR.AGGRESSIVE];
 
-      // Intent types based on enemy and randomness
-      const roll = Math.random();
-      if (roll < 0.7 || this.turn === 1) {
-        // Attack intent
-        const variance = Math.floor(Math.random() * 3) - 1;
-        let dmg = Math.max(1, s.attack + variance + (es.strength || 0));
-        if (this._getStatusEffect(this.player, 'weak')) dmg = Math.floor(dmg * 0.75);
-        this.intents.set(enemy.id, { type:'attack', value:dmg, desc:`⚔ ${dmg}`, color:'#ff6666' });
-      } else if (roll < 0.85) {
-        // Buff intent
-        const buffAmt = 1 + Math.floor(Math.random() * 2);
-        this.intents.set(enemy.id, { type:'buff', stat:'strength', value:buffAmt, desc:`🛡 +${buffAmt}力`, color:'#6688ff',
-          onExecute: () => { es.strength = (es.strength || 0) + buffAmt; this.eb.emit('battle:enemyBuff', { enemy, stat:'strength', value:buffAmt }); }
-        });
-      } else {
-        // Debuff intent
-        this.intents.set(enemy.id, { type:'debuff', status:'weak', value:1, desc:`💀 易伤`, color:'#cc66ff',
-          onExecute: () => {
-            const ps = this._ensureStatuses(this.player);
-            ps.weak = (ps.weak || 0) + 1;
-            this.eb.emit('battle:enemyDebuff', { enemy, status:'weak', value:1 });
-          }
-        });
+      // Boss/Elite: use pattern-based intents every 3rd turn
+      if ((behavior === BEHAVIOR.BOSS || behavior === BEHAVIOR.ELITE) && this.turn > 1 && this.turn % 3 === 0) {
+        this._addSpecialIntent(enemy, s, es, behavior);
+        continue;
       }
+
+      const total = weights.attack + weights.buff + weights.debuff + weights.block;
+      let roll = Math.random() * total;
+
+      if ((roll -= weights.attack) < 0) {
+        this._addAttackIntent(enemy, s, es);
+      } else if ((roll -= weights.buff) < 0) {
+        this._addBuffIntent(enemy, s, es);
+      } else if ((roll -= weights.debuff) < 0) {
+        this._addDebuffIntent(enemy, s, es);
+      } else {
+        this._addBlockIntent(enemy, s, es);
+      }
+    }
+  }
+
+  _addAttackIntent(enemy, s, es) {
+    const variance = Math.floor(Math.random() * 3) - 1;
+    let dmg = Math.max(1, s.attack + variance + (es.strength || 0));
+    if (this._getStatusEffect(this.player, 'weak')) dmg = Math.floor(dmg * 0.75);
+    this.intents.set(enemy.id, { type:'attack', value:dmg, desc:`⚔ ${dmg}`, color:'#ff6666' });
+  }
+
+  _addBuffIntent(enemy, s, es) {
+    const info = enemy.getComponent('monsterInfo') || {};
+    const behavior = info.behavior || BEHAVIOR.AGGRESSIVE;
+    if (behavior === BEHAVIOR.RITUALIST) {
+      // Ritualists gain more strength
+      const buffAmt = 2 + Math.floor(Math.random() * 2);
+      this.intents.set(enemy.id, { type:'buff', stat:'strength', value:buffAmt, desc:`🛡 +${buffAmt}力`, color:'#ff4444',
+        onExecute: () => { es.strength = (es.strength || 0) + buffAmt; this.eb.emit('battle:enemyBuff', { enemy, stat:'strength', value:buffAmt }); }
+      });
+    } else if (behavior === BEHAVIOR.DEFENSIVE || behavior === BEHAVIOR.ELITE) {
+      // Defensive enemies gain block
+      const blockAmt = 6 + Math.floor(Math.random() * 4);
+      this.intents.set(enemy.id, { type:'buff', stat:'block_self', value:blockAmt, desc:`🛡 +${blockAmt}甲`, color:'#4488ff',
+        onExecute: () => { s.block = (s.block || 0) + blockAmt; this.eb.emit('battle:enemyBuff', { enemy, stat:'block', value:blockAmt }); }
+      });
+    } else {
+      const buffAmt = 1 + Math.floor(Math.random() * 2);
+      this.intents.set(enemy.id, { type:'buff', stat:'strength', value:buffAmt, desc:`🛡 +${buffAmt}力`, color:'#6688ff',
+        onExecute: () => { es.strength = (es.strength || 0) + buffAmt; this.eb.emit('battle:enemyBuff', { enemy, stat:'strength', value:buffAmt }); }
+      });
+    }
+  }
+
+  _addDebuffIntent(enemy, s, es) {
+    const info = enemy.getComponent('monsterInfo') || {};
+    const behavior = info.behavior || BEHAVIOR.AGGRESSIVE;
+    if (behavior === BEHAVIOR.STATUS && Math.random() < 0.5) {
+      // Status-dealers apply poison aggressively
+      const poisonAmt = 2 + Math.floor(Math.random() * 3);
+      this.intents.set(enemy.id, { type:'debuff', status:'poison', value:poisonAmt, desc:`💀 毒${poisonAmt}`, color:'#44ff44',
+        onExecute: () => {
+          const ps = this._ensureStatuses(this.player);
+          ps.poison = (ps.poison || 0) + poisonAmt;
+          this.eb.emit('battle:enemyDebuff', { enemy, status:'poison', value:poisonAmt });
+        }
+      });
+    } else if (behavior === BEHAVIOR.BOSS && Math.random() < 0.5) {
+      // Bosses apply vuln
+      this.intents.set(enemy.id, { type:'debuff', status:'vuln', value:2, desc:`💀 脆弱2`, color:'#ff4488',
+        onExecute: () => {
+          const ps = this._ensureStatuses(this.player);
+          ps.vuln = (ps.vuln || 0) + 2;
+          this.eb.emit('battle:enemyDebuff', { enemy, status:'vuln', value:2 });
+        }
+      });
+    } else {
+      // Default weak debuff
+      this.intents.set(enemy.id, { type:'debuff', status:'weak', value:1, desc:`💀 易伤`, color:'#cc66ff',
+        onExecute: () => {
+          const ps = this._ensureStatuses(this.player);
+          ps.weak = (ps.weak || 0) + 1;
+          this.eb.emit('battle:enemyDebuff', { enemy, status:'weak', value:1 });
+        }
+      });
+    }
+  }
+
+  _addBlockIntent(enemy, s, es) {
+    const blockAmt = 4 + Math.floor(Math.random() * 6) + (es.dexterity || 0);
+    this.intents.set(enemy.id, { type:'block', value:blockAmt, desc:`🛡 ${blockAmt}甲`, color:'#4488ff',
+      onExecute: () => { s.block = (s.block || 0) + blockAmt; this.eb.emit('battle:enemyBuff', { enemy, stat:'block', value:blockAmt }); }
+    });
+  }
+
+  _addSpecialIntent(enemy, s, es) {
+    const info = enemy.getComponent('monsterInfo') || {};
+    const behavior = info.behavior || BEHAVIOR.AGGRESSIVE;
+    // Every 3 turns: elites/bosses do a special attack (higher damage or AoE)
+    if (behavior === BEHAVIOR.BOSS) {
+      // Boss cleave: high damage ignoring some block
+      const dmg = Math.floor((s.attack + (es.strength || 0)) * 1.8);
+      this.intents.set(enemy.id, { type:'attack', value:dmg, desc:`⚔⚔ ${dmg}！！`, color:'#ff0000' });
+    } else {
+      // Elite: double attack
+      const dmg1 = Math.max(1, Math.floor((s.attack + (es.strength || 0)) * 0.7));
+      const dmg2 = Math.max(1, Math.floor((s.attack + (es.strength || 0)) * 0.7));
+      this.intents.set(enemy.id, { type:'multi_attack', hits:[dmg1, dmg2], desc:`×2  ${dmg1}`, color:'#ff8844',
+        onExecute: () => {
+          for (const hit of [dmg1, dmg2]) {
+            this._enemyAttack(enemy, hit);
+          }
+        }
+      });
     }
   }
 
@@ -173,7 +280,9 @@ export class BattleSystem {
 
     this.energy -= card.cost;
     this.hand.splice(cardIndex, 1);
-    this.discardPile.push(card);
+    // 消耗：retain_block 牌打出后永久移除（不进入弃牌堆）
+    const hasRetain = card.effects && card.effects.some(e => e.type === 'retain_block');
+    if (!hasRetain) this.discardPile.push(card);
 
     const target = this.enemies[targetEnemyIndex];
     this._resolveEffects(card.effects, target);
@@ -268,6 +377,15 @@ export class BattleSystem {
         }
         case 'retain_block': {
           this._retainBlock = true;
+          this._permanentRetainBlock = true;
+          break;
+        }
+        case 'double_block': {
+          const dbPs = this.player.getComponent('stats');
+          if (dbPs && dbPs.block) {
+            dbPs.block *= 2;
+            this.eb.emit('battle:playerBuff', { stat: 'block', value: dbPs.block });
+          }
           break;
         }
       }
@@ -300,9 +418,9 @@ export class BattleSystem {
     for (const enemy of this.enemies) this._tickStatuses(enemy);
     this._tickStatuses(this.player);
 
-    // Block expires (unless retained — like Blur in Slay the Spire)
+    // Block expires (unless retained — permanent via consumed retain_block cards)
     const ps = this.player.getComponent('stats');
-    if (!this._retainBlock && ps) ps.block = 0;
+    if (!this._retainBlock && !this._permanentRetainBlock && ps) ps.block = 0;
     this._retainBlock = false;
 
     // Cleanup dead enemies
@@ -350,7 +468,7 @@ export class BattleSystem {
   _generateRewards() {
     // 40% chance to offer card rewards, to control deck growth
     if (Math.random() < 0.4) {
-      this.rewardCards = getRandomCards(3, this.selectedArchetypes);
+      this.rewardCards = getRandomCards(3, this.selectedArchetypes, [], this.depth || 1);
     } else {
       this.rewardCards = null;
     }

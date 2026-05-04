@@ -1,10 +1,10 @@
 import { GameManager } from '../core/GameManager.js';
 import { TurnSystem } from '../core/TurnSystem.js';
-import { MapSystem, TILE, VIS } from '../systems/MapSystem.js';
+import { MapSystem, TILE, VIS, ROOM_TYPE, FLOOR_THEMES } from '../systems/MapSystem.js';
 import { FOVSystem } from '../systems/FOVSystem.js';
 import { CombatSystem } from '../systems/CombatSystem.js';
 import { BattleSystem } from '../systems/BattleSystem.js';
-import { ARCHETYPES, getArchetypeCardCount } from '../systems/CardSystem.js';
+import { ARCHETYPES, QUALITY } from '../systems/CardSystem.js';
 import { createPlayer } from '../entities/factories.js';
 
 export class GameScene extends Phaser.Scene {
@@ -29,7 +29,11 @@ export class GameScene extends Phaser.Scene {
     this._battleDir = null;
     this.battleUI = [];    // Battle UI elements
     this.deckUI = [];      // Deck view UI elements
+    this.inventoryUI = []; // Inventory UI elements
     this.selectedCard = -1;
+    this._visitedRooms = new Set();
+    this._pChips = [];
+    this._eChips = [];
   }
 
   shutdown() {
@@ -58,6 +62,7 @@ export class GameScene extends Phaser.Scene {
 
     this.gm.newLevel(this.gm.depth);
     this.fovSystem.compute(this.gm.player.x, this.gm.player.y);
+    this._visitedRooms = new Set();
 
     const ww = this.mapSystem.w * this.TS;
     const wh = this.mapSystem.h * this.TS;
@@ -70,100 +75,23 @@ export class GameScene extends Phaser.Scene {
     this._createDPad();
     this._bindEvents();
 
+    const themeName = this.mapSystem.theme?.name || '地牢';
+    this.addMessage(`欢迎来到混沌协议 — 第 ${this.gm.depth} 层 [${themeName}]`, '#ff0');
+
+    // Show selected archetypes
+    const archNames = selectedArchetypes.map(id => ARCHETYPES[id]?.name || id);
+    this.addMessage(`本次流派：${archNames.join('、')}`, '#ff0');
+
     this._renderAll();
     this._updateHUD();
   }
 
   _showArchetypeSelection() {
-    const sw = this.scale.width, sh = this.scale.height;
-    const MAX_SELECT = 3;
-    const selected = [];
-    const ui = [];
+    // Randomly select 2 archetypes instead of showing selection UI
     const archetypeIds = Object.keys(ARCHETYPES);
-
-    // Overlay
-    ui.push(this.add.rectangle(sw/2, sh/2, sw, sh, 0x000000, 0.95)
-      .setScrollFactor(0).setDepth(50));
-
-    // Title
-    ui.push(this.add.text(sw/2, 20, '⚡ 流派选择', {
-      fontSize: '22px', color: '#ff0', fontFamily: 'monospace'
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51));
-
-    // Subtitle
-    ui.push(this.add.text(sw/2, 50, '选择 1~3 个流派，决定本局可获得的卡牌', {
-      fontSize: '12px', color: '#aaa', fontFamily: 'monospace'
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51));
-
-    // Selected count display
-    const countTxt = this.add.text(sw/2, 70, '已选 0/3', {
-      fontSize: '14px', color: '#8cf', fontFamily: 'monospace'
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51);
-    ui.push(countTxt);
-
-    // Archetype card grid
-    const gap = 8;
-    const cols = 3;
-    const cardW = Math.min(140, (sw - 40 - gap * (cols - 1)) / cols);
-    const cardH = 78;
-    const rows = Math.ceil(archetypeIds.length / cols);
-    const gridW = cols * cardW + (cols - 1) * gap;
-    const gridH = rows * cardH + (rows - 1) * gap;
-    const gridX = (sw - gridW) / 2;
-    const gridY = 88;
-
-    archetypeIds.forEach((id, i) => {
-      const a = ARCHETYPES[id];
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const cx = gridX + col * (cardW + gap);
-      const cy = gridY + row * (cardH + gap);
-
-      const bg = this.add.rectangle(cx + cardW/2, cy + cardH/2, cardW, cardH, 0x333333, 0.9)
-        .setScrollFactor(0).setDepth(52).setInteractive();
-      const border = this.add.rectangle(cx + cardW/2, cy + cardH/2, cardW, cardH)
-        .setScrollFactor(0).setDepth(51).setStrokeStyle(2, 0x666666);
-      const nameTxt = this.add.text(cx + cardW/2, cy + 8, a.name, {
-        fontSize: '16px', color: '#fff', fontFamily: 'monospace'
-      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(53);
-      const descTxt = this.add.text(cx + cardW/2, cy + 30, a.desc, {
-        fontSize: '11px', color: '#aaa', fontFamily: 'monospace'
-      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(53);
-      const cntTxt = this.add.text(cx + cardW/2, cy + 52, `${getArchetypeCardCount(id)} 张卡牌`, {
-        fontSize: '10px', color: '#888', fontFamily: 'monospace'
-      }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(53);
-
-      ui.push(bg, border, nameTxt, descTxt, cntTxt);
-
-      bg.on('pointerdown', () => {
-        const idx = selected.indexOf(id);
-        if (idx >= 0) {
-          selected.splice(idx, 1);
-          bg.setFillStyle(0x333333, 0.9);
-          border.setStrokeStyle(2, 0x666666);
-        } else if (selected.length < MAX_SELECT) {
-          selected.push(id);
-          bg.setFillStyle(a.color, 0.25);
-          border.setStrokeStyle(2, a.color);
-        }
-        countTxt.setText(`已选 ${selected.length}/${MAX_SELECT}`);
-        confirmBtn.setAlpha(selected.length > 0 ? 1 : 0.4);
-      });
-    });
-
-    // Confirm button
-    const confirmBtn = this.add.rectangle(sw/2, sh - 40, 200, 44, 0x448844, 0.9)
-      .setScrollFactor(0).setDepth(52).setInteractive().setAlpha(0.4);
-    const confirmTxt = this.add.text(sw/2, sh - 40, '开始探险', {
-      fontSize: '18px', color: '#fff', fontFamily: 'monospace'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(53);
-    ui.push(confirmBtn, confirmTxt);
-
-    confirmBtn.on('pointerdown', () => {
-      if (selected.length === 0) return;
-      ui.forEach(o => o.destroy());
-      this._startGame(selected);
-    });
+    const shuffled = [...archetypeIds].sort(() => Math.random() - 0.5);
+    const selected = shuffled.slice(0, 2);
+    this._startGame(selected);
   }
 
   /* ─── TILE SIZE ─── */
@@ -195,16 +123,16 @@ export class GameScene extends Phaser.Scene {
         const t = map.tiles[y][x];
         if (t.vis === VIS.UNSEEN) continue;
 
-        let color;
-        if (t.vis === VIS.EXPLORED) color = t.type === TILE.FLOOR ? 0x333333 : 0x1a1a1a;
-        else color = t.type === TILE.FLOOR ? 0x555555 : 0x2a2a2a;
+        const color = map.getTileColor(t, t.vis);
+        if (color === null) continue;
 
         g.fillStyle(color, 1);
         g.fillRect(x * ts, y * ts, ts, ts);
 
         if (t.vis === VIS.VISIBLE && t.type === TILE.FLOOR) {
-          g.fillStyle(0x666666, 1);
-          g.fillRect(x * ts + 1, y * ts + 1, ts - 2, ts - 2);
+          // Indoor floor effect: slightly brighter center
+          g.fillStyle(0x000000, 0.15);
+          g.fillRect(x * ts + 2, y * ts + 2, ts - 4, ts - 4);
         }
       }
     }
@@ -250,6 +178,10 @@ export class GameScene extends Phaser.Scene {
       ...style, color: '#8cf'
     }).setOrigin(1, 0).setScrollFactor(0).setDepth(21).setInteractive();
     this.hudDeckBtn.on('pointerdown', () => { if (!this.gameOver) this._showDeck(); });
+    this.hudInvBtn = this.add.text(this.scale.width - 80, 4, '[背包]', {
+      ...style, color: '#8c8'
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(21).setInteractive();
+    this.hudInvBtn.on('pointerdown', () => { if (!this.gameOver) this._toggleInventory(); });
   }
 
   _updateHUD() {
@@ -258,8 +190,20 @@ export class GameScene extends Phaser.Scene {
     const s = p.getComponent('stats');
     const hpBar = this._bar(s.hp, s.maxHp, 10);
     const deckSize = this.battleSystem?.persistentDeck?.length ?? 0;
+
+    // Check for active buffs
+    const statuses = p.getComponent('statuses');
+    let buffStr = '';
+    if (statuses) {
+      const parts = [];
+      if (statuses.strength) parts.push(`力+${statuses.strength}`);
+      if (statuses.dexterity) parts.push(`敏+${statuses.dexterity}`);
+      if (statuses.poison) parts.push(`毒${statuses.poison}`);
+      if (parts.length > 0) buffStr = '  [' + parts.join(' ') + ']';
+    }
+
     this.hudL.setText(
-      `HP:${hpBar} ${s.hp}/${s.maxHp}  ATK:${s.attack}  DEF:${s.defense}  牌组:${deckSize}  深度:${this.gm.depth}`
+      `HP:${hpBar} ${s.hp}/${s.maxHp}  ATK:${s.attack}  DEF:${s.defense}  牌组:${deckSize}  深度:${this.gm.depth}${buffStr}`
     );
     this.hudBg.setSize(this.scale.width, 24);
   }
@@ -354,6 +298,7 @@ export class GameScene extends Phaser.Scene {
       };
       if (map[ev.key]) { this._handleAction(map[ev.key][0], map[ev.key][1]); return; }
       if (ev.key === 'Enter' || ev.key === ',' || ev.key === 'g') { this._pickup(); return; }
+      if (ev.key === 'i' || ev.key === 'I' || ev.key === 'b' || ev.key === 'B') { this._toggleInventory(); return; }
       if (ev.key === '>' || ev.key === '<') { this._stairs(); }
     });
 
@@ -418,6 +363,9 @@ export class GameScene extends Phaser.Scene {
         this.eb.emit('player:move', { x: tx, y: ty });
         this.fovSystem.compute(tx, ty);
 
+        // Check room type on entering a new room
+        this._checkRoomType();
+
         // Auto-pickup items on ground
         const items = this.gm.getItemsAt(tx, ty);
         if (items.length > 0) {
@@ -473,6 +421,7 @@ export class GameScene extends Phaser.Scene {
 
   _stairs() {
     if (this.gameOver) return;
+    this._closeInventory();
     const p = this.gm.player;
     const stairs = this.gm.entities.find(e =>
       e.hasComponent('stairs') && e.x === p.x && e.y === p.y
@@ -481,9 +430,50 @@ export class GameScene extends Phaser.Scene {
     this.gm.depth++;
     this.gm.newLevel(this.gm.depth);
     this.fovSystem.compute(p.x, p.y);
-    this.addMessage(`向下到达第 ${this.gm.depth} 层`, '#fa0');
+    this._visitedRooms = new Set();
+    const themeName = this.mapSystem.theme?.name || '地牢';
+    this.addMessage(`↓ 到达第 ${this.gm.depth} 层 [${themeName}]`, '#fa0');
     this._renderAll();
     this._updateHUD();
+  }
+
+  /** Get the room type of the room the player is currently in (or 'normal') */
+  _getPlayerRoomType() {
+    const p = this.gm.player;
+    if (!p || !this.mapSystem.roomTypes) return ROOM_TYPE.NORMAL;
+    for (let i = 0; i < this.mapSystem.rooms.length; i++) {
+      const r = this.mapSystem.rooms[i];
+      if (p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h) {
+        return this.mapSystem.roomTypes[i] || ROOM_TYPE.NORMAL;
+      }
+    }
+    return ROOM_TYPE.NORMAL;
+  }
+
+  /** Check current room type and show messages / trigger effects */
+  _checkRoomType() {
+    const roomType = this._getPlayerRoomType();
+    if (roomType === ROOM_TYPE.TREASURE) {
+      this.addMessage('↵ 宝藏房间！发现宝物！', '#ff0');
+    } else if (roomType === ROOM_TYPE.ELITE) {
+      this.addMessage('⚠ 精英房间！强大的敌人潜伏其中！', '#f80');
+    } else if (roomType === ROOM_TYPE.REST) {
+      // Find which room index we're in
+      const p = this.gm.player;
+      const ps = p.getComponent('stats');
+      const roomIdx = this.mapSystem.rooms.findIndex(r =>
+        p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h
+      );
+      const alreadyUsed = this._visitedRooms.has(`rest_${roomIdx}`);
+      if (!alreadyUsed && ps && ps.hp < ps.maxHp) {
+        this._visitedRooms.add(`rest_${roomIdx}`);
+        const healAmt = Math.floor(ps.maxHp * 0.3);
+        const healed = this.gm.combatSystem.heal(p, healAmt);
+        this.addMessage(`♦ 休息室 — 恢复 ${healed} 点生命`, '#4f4');
+      } else {
+        this.addMessage('♦ 休息室 — 稍作歇息', alreadyUsed ? '#888' : '#4f4');
+      }
+    }
   }
 
   _afterTurn() {
@@ -541,6 +531,7 @@ export class GameScene extends Phaser.Scene {
   /* ─── CARD BATTLE ─── */
   _enterBattle(enemy, dx, dy) {
     this._closeDeck();
+    this._closeInventory();
     this._battleDir = { dx, dy };
     // If enemy is already dead, just clean up and step forward
     const es = enemy.getComponent('stats');
@@ -554,7 +545,7 @@ export class GameScene extends Phaser.Scene {
     this.mode = 'battle';
     this.messages = [];
     this.battleSystem.reset();
-    this.battleSystem.start(this.gm.player, [enemy]);
+    this.battleSystem.start(this.gm.player, [enemy], this.gm.depth);
     this._clearBattleUI();
     this._createBattleUI();
     this._renderBattle();
@@ -589,6 +580,7 @@ export class GameScene extends Phaser.Scene {
       p.x = nx; p.y = ny;
       this.gm.updateEntityMap(p);
       this.fovSystem.compute(nx, ny);
+      this._checkRoomType();
     }
   }
 
@@ -596,6 +588,10 @@ export class GameScene extends Phaser.Scene {
     this.battleUI.forEach(o => o.destroy());
     this.battleUI = [];
     this.selectedCard = -1;
+    // Clean up status chips
+    ['_pChips','_eChips'].forEach(k => {
+      if (this[k]) { this[k].forEach(o => o.destroy()); this[k] = []; }
+    });
   }
 
   _createBattleUI() {
@@ -647,12 +643,13 @@ export class GameScene extends Phaser.Scene {
 
     this._battleHPBar('player', sh * 0.45 + 18);
 
-    // Player statuses
+    // Player status area — updated by _renderBattle
     const pStatusTxt = this.add.text(17, sh * 0.45 + 32, '', {
-      fontSize: '11px', color: '#aaa', fontFamily: 'monospace'
+      fontSize: '9px', color: '#444', fontFamily: 'monospace'
     }).setScrollFactor(0).setDepth(31);
     this.battleUI.push(pStatusTxt);
     this._pStatus = pStatusTxt;
+    this._pStatusY = sh * 0.45 + 32;
 
     // Energy display
     this._battleEnergy(sw, sh);
@@ -800,10 +797,64 @@ export class GameScene extends Phaser.Scene {
     this._updateHPBar('enemy');
     this._updateHPBar('player');
     if (this.updateEnergyText) this.updateEnergyText();
-    // Update status text
     const bs = this.battleSystem;
-    if (this._eStatus && bs.enemies[0]) this._eStatus.setText(bs.getStatusString(bs.enemies[0]));
-    if (this._pStatus) this._pStatus.setText(bs.getStatusString(bs.player));
+
+    // Update colored status badges
+    this._updateStatusChips('player', this._pStatus, 17, this._pStatusY || (this.scale.height * 0.45 + 32));
+    this._updateStatusChips('enemy', this._eStatus, this.scale.width / 2, 72);
+  }
+
+  _updateStatusChips(who, fallbackText, x, y) {
+    const bs = this.battleSystem;
+    const entity = who === 'player' ? bs.player : (bs.enemies[0] || null);
+    const chipKey = who === 'player' ? '_pChips' : '_eChips';
+
+    // Destroy old chips
+    if (this[chipKey]) {
+      this[chipKey].forEach(o => o.destroy());
+      this[chipKey] = [];
+    } else {
+      this[chipKey] = [];
+    }
+
+    if (!entity) return;
+    const s = entity.getComponent('statuses');
+    if (!s) return;
+
+    const chips = [
+      { key: 'strength', label: `力量+${s.strength}`, color: '#ff6666', show: s.strength > 0 },
+      { key: 'dexterity', label: `敏捷+${s.dexterity}`, color: '#6688ff', show: s.dexterity > 0 },
+      { key: 'weak', label: `易伤${s.weak}`, color: '#dd8844', show: s.weak > 0 },
+      { key: 'vuln', label: `脆弱${s.vuln}`, color: '#ff4488', show: s.vuln > 0 },
+      { key: 'poison', label: `中毒${s.poison}`, color: '#44ff44', show: s.poison > 0 },
+    ].filter(c => c.show);
+
+    if (chips.length === 0) {
+      if (fallbackText) fallbackText.setText('');
+      return;
+    }
+
+    // Hide the fallback text, use colored chips instead
+    if (fallbackText) fallbackText.setText('');
+
+    const gap = 4;
+    const sw = this.scale.width;
+    // Measure total width of all chips
+    let totalW = chips.reduce((s, c) => s + c.label.length * 7 + 6, 0) + (chips.length - 1) * gap;
+    let startX = (who === 'enemy') ? x - totalW / 2 : x;
+    startX = Math.max(4, Math.min(startX, sw - totalW - 4));
+    let cx = startX;
+    let cy = y;
+
+    for (const chip of chips) {
+      const txt = this.add.text(cx, cy, chip.label, {
+        fontSize: '11px', color: chip.color, fontFamily: 'monospace',
+        backgroundColor: '#00000066',
+      }).setScrollFactor(0).setDepth(32);
+      this[chipKey].push(txt);
+      cx += txt.width + gap;
+      if (cx > sw - 16) { cx = 17; cy += chipH + 2; }
+    }
   }
 
   _onBattleTap(ptr) {
@@ -879,11 +930,23 @@ export class GameScene extends Phaser.Scene {
         wordWrap: { width: cardW - 8 }
       }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(52));
 
-      // Type tag
-      const typeLabel = card.rarity === 'rare' ? '★' : card.type === 'attack' ? '⚔' : card.type === 'skill' ? '🛡' : '✦';
-      ui.push(this.add.text(cx + cardW - 4, cy + 2, typeLabel, {
-        fontSize: '10px', color: card.rarity === 'rare' ? '#ff0' : '#888', fontFamily: 'monospace'
+      // Quality indicator (colored by quality)
+      const qDef = Object.values(QUALITY).find(q => q.id === card.quality) || QUALITY.common;
+      const qualityIcon = card.quality === 'rare' ? '◆' : card.quality === 'epic' ? '★★' : card.quality === 'legendary' ? '★★★' : '';
+      ui.push(this.add.text(cx + cardW - 4, cy + 2, qualityIcon, {
+        fontSize: '10px', color: qDef.color, fontFamily: 'monospace'
       }).setOrigin(1, 0).setScrollFactor(0).setDepth(52));
+
+      // Quality badge (left side)
+      const qName = card.quality === 'common' ? '' : card.quality === 'rare' ? '稀有' : card.quality === 'epic' ? '史诗' : card.quality === 'legendary' ? '传说' : '';
+      if (qName) {
+        ui.push(this.add.text(cx + cardW/2, cy + 14, qName, {
+          fontSize: '8px', color: qDef.color, fontFamily: 'monospace'
+        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(52));
+      }
+
+      // Border tint by quality
+      border.setStrokeStyle(1, Phaser.Display.Color.HexStringToColor(qDef.color).color);
     });
 
     this.deckUI = ui;
@@ -892,6 +955,120 @@ export class GameScene extends Phaser.Scene {
   _closeDeck() {
     this.deckUI.forEach(o => o.destroy());
     this.deckUI = [];
+  }
+
+  /* ─── Inventory ─── */
+  _toggleInventory() {
+    if (this.gameOver) return;
+    if (this.inventoryUI.length > 0) {
+      this._closeInventory();
+    } else {
+      this._showInventory();
+    }
+  }
+
+  _showInventory() {
+    this._closeDeck();
+    const sw = this.scale.width, sh = this.scale.height;
+    const inv = this.gm.player.getComponent('inventory');
+    const items = inv ? inv.items : [];
+    const cap = inv ? inv.capacity : 0;
+    const ui = [];
+
+    // Overlay
+    ui.push(this.add.rectangle(sw/2, sh/2, sw, sh, 0x000000, 0.92)
+      .setScrollFactor(0).setDepth(50));
+
+    // Title
+    ui.push(this.add.text(sw/2, 12, `背包 (${items.length}/${cap})`, {
+      fontSize: '16px', color: '#ff0', fontFamily: 'monospace'
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(51));
+
+    // Close button
+    const closeBtn = this.add.text(sw - 10, 10, 'x 关闭', {
+      fontSize: '14px', color: '#f88', fontFamily: 'monospace'
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(51).setInteractive();
+    closeBtn.on('pointerdown', () => this._closeInventory());
+    ui.push(closeBtn);
+
+    if (items.length === 0) {
+      ui.push(this.add.text(sw/2, sh/2 - 10, '背包是空的', {
+        fontSize: '14px', color: '#888', fontFamily: 'monospace'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(51));
+    } else {
+      const startY = 50;
+      const itemH = 50;
+
+      items.forEach((item, i) => {
+        const y = startY + i * itemH;
+        const ic = item.getComponent('item');
+
+        // Item row bg
+        ui.push(this.add.rectangle(sw/2, y + itemH/2, sw - 20, itemH - 4, 0x333355, 0.8)
+          .setScrollFactor(0).setDepth(51));
+
+        // Item name
+        ui.push(this.add.text(20, y + 4, `${item.glyph} ${item.name}`, {
+          fontSize: '13px', color: item.color || '#ccc', fontFamily: 'monospace'
+        }).setScrollFactor(0).setDepth(52));
+
+        // Item description
+        let desc = '';
+        if (ic) {
+          if (ic.effect === 'heal') desc = `恢复 ${ic.value} 点生命`;
+          else if (ic.effect === 'buffAttack') desc = `力量 +${ic.value} (${ic.duration || '?'}回合)`;
+        }
+        ui.push(this.add.text(20, y + 24, desc, {
+          fontSize: '11px', color: '#aaa', fontFamily: 'monospace'
+        }).setScrollFactor(0).setDepth(52));
+
+        // Use button
+        const useBtn = this.add.text(sw - 24, y + itemH/2, '[使用]', {
+          fontSize: '12px', color: '#8c8', fontFamily: 'monospace'
+        }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(53).setInteractive();
+        const idx = i;
+        useBtn.on('pointerdown', () => this._useInventoryItem(idx));
+        ui.push(useBtn);
+      });
+    }
+
+    this.inventoryUI = ui;
+  }
+
+  _closeInventory() {
+    this.inventoryUI.forEach(o => o.destroy());
+    this.inventoryUI = [];
+  }
+
+  _useInventoryItem(index) {
+    const p = this.gm.player;
+    const inv = p.getComponent('inventory');
+    if (!inv || index >= inv.items.length) return;
+
+    const item = inv.items[index];
+    const ic = item.getComponent('item');
+    if (!ic) return;
+
+    if (ic.effect === 'heal') {
+      const ps = p.getComponent('stats');
+      if (ps.hp >= ps.maxHp) { this.addMessage('生命值已满', '#888'); return; }
+      const healed = this.gm.combatSystem.heal(p, ic.value);
+      inv.items.splice(index, 1);
+      this.addMessage(`使用 ${item.name}，恢复 ${healed} 点生命`, '#4f4');
+      this._closeInventory();
+      this._updateHUD();
+    } else if (ic.effect === 'buffAttack') {
+      let s = p.getComponent('statuses');
+      if (!s) {
+        s = { weak: 0, vuln: 0, poison: 0, strength: 0, dexterity: 0 };
+        p.addComponent('statuses', s);
+      }
+      s.strength = (s.strength || 0) + ic.value;
+      inv.items.splice(index, 1);
+      this.addMessage(`使用 ${item.name}，力量 +${ic.value}！`, '#f80');
+      this._closeInventory();
+      this._updateHUD();
+    }
   }
 
   _showRewards() {
@@ -929,6 +1106,16 @@ export class GameScene extends Phaser.Scene {
         const costTxt = this.add.text(cx + 4, y + 4, `${card.cost}`, {
           fontSize: '16px', color: '#ffcc00', fontFamily: 'monospace'
         }).setScrollFactor(0).setDepth(43);
+        // Quality badge
+        const qDef = Object.values(QUALITY).find(q => q.id === card.quality) || QUALITY.common;
+        const qName = card.quality === 'common' ? '' : card.quality === 'rare' ? '稀有' : card.quality === 'epic' ? '史诗' : card.quality === 'legendary' ? '传说' : '';
+        if (qName) {
+          ui.push(this.add.text(cx + cardW/2, y + 4, qName, {
+            fontSize: '9px', color: qDef.color, fontFamily: 'monospace'
+          }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(43));
+        }
+        // Border tint by quality
+        border.setStrokeStyle(2, Phaser.Display.Color.HexStringToColor(qDef.color).color);
         const nameTxt = this.add.text(cx + cardW/2, y + 22, card.name, {
           fontSize: '13px', color: '#fff', fontFamily: 'monospace'
         }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(43);
@@ -946,12 +1133,14 @@ export class GameScene extends Phaser.Scene {
         });
       });
 
-      // Skip button
-      const skipBtn = this.add.text(sw/2, sh - 40, '[ 跳过 ]', {
-        fontSize: '14px', color: '#888', fontFamily: 'monospace'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(42).setInteractive();
-      skipBtn.on('pointerdown', () => { this._clearBattleUI(); this._exitBattle(true); });
-      ui.push(skipBtn);
+      // Skip button (不选择卡牌)
+      const skipBtnBg = this.add.rectangle(sw/2, sh - 40, 180, 36, 0x663333, 0.9)
+        .setScrollFactor(0).setDepth(42).setInteractive();
+      const skipBtnTxt = this.add.text(sw/2, sh - 40, '不选择卡牌', {
+        fontSize: '15px', color: '#f88', fontFamily: 'monospace'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(43);
+      skipBtnBg.on('pointerdown', () => { this._clearBattleUI(); this._exitBattle(true); });
+      ui.push(skipBtnBg, skipBtnTxt);
     } else {
       // No card reward this time — just show recovery info
       ui.push(this.add.text(sw/2, sh/2 - 20, '⚡ 战斗胜利', {
